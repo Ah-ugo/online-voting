@@ -1037,7 +1037,7 @@ async def get_election_results(election_id: str, current_user: dict = Depends(ge
 
 
 
-@app.get("/admin/elections", response_description="List all elections for admin", response_model=List[ElectionBase])
+@app.get("/admin/elections", response_description="List all elections for admin", response_model=List[ElectionInDB])
 async def admin_list_elections(current_user: dict = Depends(get_admin_user)):
     """
     Retrieves a list of all elections for administrators.
@@ -1320,7 +1320,7 @@ async def admin_list_active_upcoming_elections(current_user: dict = Depends(get_
 
 @app.delete("/admin/elections/{election_id}", response_description="Delete an election")
 async def delete_election(election_id: str, current_user: dict = Depends(get_admin_user)):
-    election_obj_id = validate_object_id(election_id, "Invalid election ID")
+    election_obj_id = validate_object_id(election_id)
 
     # Delete all candidates for this election
     await db.candidates.delete_many({"electionId": election_id})
@@ -1361,8 +1361,12 @@ async def delete_election(election_id: str, current_user: dict = Depends(get_adm
 
 @app.get("/candidates/election/{election_id}", response_description="List candidates for an election")
 async def list_election_candidates(election_id: str, current_user: dict = Depends(get_current_user)):
-    # Verify election exists and user has access
-    election_obj_id = validate_object_id(election_id, "Invalid election ID")
+    """
+    Lists candidates for a specific election.
+    """
+    election_obj_id = validate_object_id(election_id)
+    if election_obj_id is None:
+        raise HTTPException(status_code=400, detail="Invalid election ID")
 
     election = await db.elections.find_one({"_id": election_obj_id})
     if not election:
@@ -1375,7 +1379,6 @@ async def list_election_candidates(election_id: str, current_user: dict = Depend
         candidate["_id"] = str(candidate["_id"])
 
     return candidates
-
 
 @app.post("/admin/candidates", response_description="Create a new candidate")
 async def create_candidate(
