@@ -679,13 +679,31 @@ async def delete_department(department_id: str, current_user: dict = Depends(get
 # Election routes
 @app.get("/elections/active", response_description="List active elections")
 async def list_active_elections(current_user: dict = Depends(get_current_user)):
-    now = datetime.now(timezone.utc)
+    now_utc = datetime.now(timezone.utc)
+    print(f"Current UTC time for user elections: {now_utc}")
 
-    # Get elections that are currently active
-    query = {
-        "startDate": {"$lte": now},
-        "endDate": {"$gte": now}
-    }
+    # MongoDB query using proper BSON date format for comparison
+    pipeline = [
+        {
+            "$match": {
+                "$expr": {
+                    "$and": [
+                        {"$lte": [{"$toDate": "$startDate"}, now_utc]},
+                        {"$gte": [{"$toDate": "$endDate"}, now_utc]}
+                    ]
+                }
+            }
+        }
+    ]
+
+    elections = await db.elections.aggregate(pipeline).to_list(1000)
+    print(f"Total number of active elections found: {len(elections)}")
+
+    # Debug: Print each election
+    for i, election in enumerate(elections):
+        print(
+            f"Election {i + 1}: ID={election.get('_id')}, Category={election.get('category')}, Title={election.get('title')}")
+        print(f"  facultyId={election.get('facultyId')}, departmentId={election.get('departmentId')}")
 
     # Get user's faculty and department IDs
     user_faculty_id = None
@@ -701,38 +719,94 @@ async def list_active_elections(current_user: dict = Depends(get_current_user)):
     elif current_user.get("department"):
         user_department_id = current_user["department"]
 
-    elections = await db.elections.find(query).to_list(1000)
+    print(f"User faculty ID: {user_faculty_id}, User department ID: {user_department_id}")
 
     # Filter elections based on user's faculty/department
     filtered_elections = []
     for election in elections:
         election["_id"] = str(election["_id"])
+        category = election.get("category", "").lower()  # Convert to lowercase for case-insensitive comparison
+
+        print(f"Processing election: {election.get('title')} with category: {category}")
 
         # SUG elections are available to all students
-        if election["category"] == "SUG":
+        if category == "sug":
+            print(f"  Adding SUG election: {election.get('title')}")
             filtered_elections.append(election)
         # Faculty elections are only available to students in that faculty
-        elif election["category"] == "Faculty" and user_faculty_id:
-            # Check if user's faculty matches the election's faculty restriction
-            if not election.get("facultyId") or str(election.get("facultyId")) == str(user_faculty_id):
-                filtered_elections.append(election)
+        elif category == "faculty":
+            print(f"  Checking faculty election: {election.get('title')}")
+            if user_faculty_id:
+                print(f"  User has faculty ID: {user_faculty_id}")
+                if not election.get("facultyId"):
+                    print(f"  Election has no facultyId restriction, adding")
+                    filtered_elections.append(election)
+                elif str(election.get("facultyId")) == str(user_faculty_id):
+                    print(f"  User's faculty matches election's faculty, adding")
+                    filtered_elections.append(election)
+                else:
+                    print(f"  Faculty mismatch: election={election.get('facultyId')}, user={user_faculty_id}")
+            else:
+                print(f"  User has no faculty ID, skipping")
         # Department elections are only available to students in that department
-        elif election["category"] == "Department" and user_department_id:
-            # Check if user's department matches the election's department restriction
-            if not election.get("departmentId") or str(election.get("departmentId")) == str(user_department_id):
-                filtered_elections.append(election)
+        elif category == "department":
+            print(f"  Checking department election: {election.get('title')}")
+            if user_department_id:
+                print(f"  User has department ID: {user_department_id}")
+                if not election.get("departmentId"):
+                    print(f"  Election has no departmentId restriction, adding")
+                    filtered_elections.append(election)
+                elif str(election.get("departmentId")) == str(user_department_id):
+                    print(f"  User's department matches election's department, adding")
+                    filtered_elections.append(election)
+                else:
+                    print(f"  Department mismatch: election={election.get('departmentId')}, user={user_department_id}")
+            else:
+                print(f"  User has no department ID, skipping")
+        # Handle any custom categories
+        else:
+            print(f"  Unrecognized category: {category}, checking if it matches")
+            # Try a case-insensitive match for any other categories
+            if election.get("category", "").lower() in ["sug", "faculty", "department"]:
+                print(f"  Category is a known type but different case, processing as {election.get('category', '')}")
+                # Handle the category with its original spelling but case-insensitive logic
+                if election.get("category", "").lower() == "sug":
+                    print(f"  Adding SUG election: {election.get('title')}")
+                    filtered_elections.append(election)
+                elif election.get("category", "").lower() == "faculty" and user_faculty_id:
+                    if not election.get("facultyId") or str(election.get("facultyId")) == str(user_faculty_id):
+                        print(f"  Faculty match, adding")
+                        filtered_elections.append(election)
+                elif election.get("category", "").lower() == "department" and user_department_id:
+                    if not election.get("departmentId") or str(election.get("departmentId")) == str(user_department_id):
+                        print(f"  Department match, adding")
+                        filtered_elections.append(election)
+            else:
+                print(f"  Adding election with unknown category: {category}")
+                filtered_elections.append(election)  # Default to showing elections with unknown categories
 
+    print(f"Number of filtered active elections for user: {len(filtered_elections)}")
     return filtered_elections
 
 
 @app.get("/elections/upcoming", response_description="List upcoming elections")
 async def list_upcoming_elections(current_user: dict = Depends(get_current_user)):
-    now = datetime.now(timezone.utc)
+    now_utc = datetime.now(timezone.utc)
+    print(f"Current UTC time for upcoming elections: {now_utc}")
 
-    # Get elections that are upcoming
-    query = {
-        "startDate": {"$gt": now}
-    }
+    # MongoDB query using proper BSON date format for comparison
+    pipeline = [
+        {
+            "$match": {
+                "$expr": {
+                    "$gt": [{"$toDate": "$startDate"}, now_utc]
+                }
+            }
+        }
+    ]
+
+    elections = await db.elections.aggregate(pipeline).to_list(1000)
+    print(f"Total number of upcoming elections found: {len(elections)}")
 
     # Get user's faculty and department IDs
     user_faculty_id = None
@@ -748,8 +822,6 @@ async def list_upcoming_elections(current_user: dict = Depends(get_current_user)
     elif current_user.get("department"):
         user_department_id = current_user["department"]
 
-    elections = await db.elections.find(query).to_list(1000)
-
     # Filter elections based on user's faculty/department
     filtered_elections = []
     for election in elections:
@@ -759,27 +831,38 @@ async def list_upcoming_elections(current_user: dict = Depends(get_current_user)
         if election["category"] == "SUG":
             filtered_elections.append(election)
         # Faculty elections are only available to students in that faculty
-        elif election["category"] == "Faculty" and user_faculty_id:
+        elif election["category"] == "faculty" and user_faculty_id:
             # Check if user's faculty matches the election's faculty restriction
             if not election.get("facultyId") or str(election.get("facultyId")) == str(user_faculty_id):
                 filtered_elections.append(election)
         # Department elections are only available to students in that department
-        elif election["category"] == "Department" and user_department_id:
+        elif election["category"] == "department" and user_department_id:
             # Check if user's department matches the election's department restriction
             if not election.get("departmentId") or str(election.get("departmentId")) == str(user_department_id):
                 filtered_elections.append(election)
 
+    print(f"Number of filtered upcoming elections for user: {len(filtered_elections)}")
     return filtered_elections
 
 
 @app.get("/elections/past", response_description="List past elections")
 async def list_past_elections(current_user: dict = Depends(get_current_user)):
-    now = datetime.now(timezone.utc)
+    now_utc = datetime.now(timezone.utc)
+    print(f"Current UTC time for past elections: {now_utc}")
 
-    # Get elections that are completed
-    query = {
-        "endDate": {"$lt": now}
-    }
+    # MongoDB query using proper BSON date format for comparison
+    pipeline = [
+        {
+            "$match": {
+                "$expr": {
+                    "$lt": [{"$toDate": "$endDate"}, now_utc]
+                }
+            }
+        }
+    ]
+
+    elections = await db.elections.aggregate(pipeline).to_list(1000)
+    print(f"Total number of past elections found: {len(elections)}")
 
     # Get user's faculty and department IDs
     user_faculty_id = None
@@ -795,8 +878,6 @@ async def list_past_elections(current_user: dict = Depends(get_current_user)):
     elif current_user.get("department"):
         user_department_id = current_user["department"]
 
-    elections = await db.elections.find(query).to_list(1000)
-
     # Filter elections based on user's faculty/department
     filtered_elections = []
     for election in elections:
@@ -806,27 +887,39 @@ async def list_past_elections(current_user: dict = Depends(get_current_user)):
         if election["category"] == "SUG":
             filtered_elections.append(election)
         # Faculty elections are only available to students in that faculty
-        elif election["category"] == "Faculty" and user_faculty_id:
+        elif election["category"] == "faculty" and user_faculty_id:
             # Check if user's faculty matches the election's faculty restriction
             if not election.get("facultyId") or str(election.get("facultyId")) == str(user_faculty_id):
                 filtered_elections.append(election)
         # Department elections are only available to students in that department
-        elif election["category"] == "Department" and user_department_id:
+        elif election["category"] == "department" and user_department_id:
             # Check if user's department matches the election's department restriction
             if not election.get("departmentId") or str(election.get("departmentId")) == str(user_department_id):
                 filtered_elections.append(election)
 
+    print(f"Number of filtered past elections for user: {len(filtered_elections)}")
     return filtered_elections
 
 
 @app.get("/elections/completed", response_description="List completed elections")
 async def list_completed_elections(current_user: dict = Depends(get_current_user)):
-    now = datetime.now(timezone.utc)
+    # This is essentially the same as past elections, so we're using the same implementation
+    now_utc = datetime.now(timezone.utc)
+    print(f"Current UTC time for completed elections: {now_utc}")
 
-    # Get elections that are completed
-    query = {
-        "endDate": {"$lt": now}
-    }
+    # MongoDB query using proper BSON date format for comparison
+    pipeline = [
+        {
+            "$match": {
+                "$expr": {
+                    "$lt": [{"$toDate": "$endDate"}, now_utc]
+                }
+            }
+        }
+    ]
+
+    elections = await db.elections.aggregate(pipeline).to_list(1000)
+    print(f"Total number of completed elections found: {len(elections)}")
 
     # Get user's faculty and department IDs
     user_faculty_id = None
@@ -842,8 +935,6 @@ async def list_completed_elections(current_user: dict = Depends(get_current_user
     elif current_user.get("department"):
         user_department_id = current_user["department"]
 
-    elections = await db.elections.find(query).to_list(1000)
-
     # Filter elections based on user's faculty/department
     filtered_elections = []
     for election in elections:
@@ -853,16 +944,17 @@ async def list_completed_elections(current_user: dict = Depends(get_current_user
         if election["category"] == "SUG":
             filtered_elections.append(election)
         # Faculty elections are only available to students in that faculty
-        elif election["category"] == "Faculty" and user_faculty_id:
+        elif election["category"] == "faculty" and user_faculty_id:
             # Check if user's faculty matches the election's faculty restriction
             if not election.get("facultyId") or str(election.get("facultyId")) == str(user_faculty_id):
                 filtered_elections.append(election)
         # Department elections are only available to students in that department
-        elif election["category"] == "Department" and user_department_id:
+        elif election["category"] == "department" and user_department_id:
             # Check if user's department matches the election's department restriction
             if not election.get("departmentId") or str(election.get("departmentId")) == str(user_department_id):
                 filtered_elections.append(election)
 
+    print(f"Number of filtered completed elections for user: {len(filtered_elections)}")
     return filtered_elections
 
 
@@ -959,21 +1051,25 @@ async def create_election(election: ElectionBase, current_user: dict = Depends(g
     # Verify faculty exists if facultyId is provided
     if election.facultyId:
         try:
-            faculty_id = validate_object_id(election.facultyId, "Invalid faculty ID")
-            faculty = await db.faculties.find_one({"_id": faculty_id})
+            faculty_id = validate_object_id(election.facultyId)  # Corrected call
+            if faculty_id is None:
+                raise HTTPException(status_code=400, detail="Invalid faculty ID")
+            faculty = await db.faculties.find_one({"_id": ObjectId(faculty_id)})
             if not faculty:
                 raise HTTPException(status_code=404, detail="Faculty not found")
-        except HTTPException:
+        except Exception:  # Catch any exception during ObjectId conversion
             raise HTTPException(status_code=400, detail="Invalid faculty ID")
 
     # Verify department exists if departmentId is provided
     if election.departmentId:
         try:
-            department_id = validate_object_id(election.departmentId, "Invalid department ID")
-            department = await db.departments.find_one({"_id": department_id})
+            department_id = validate_object_id(election.departmentId)  # Corrected call
+            if department_id is None:
+                raise HTTPException(status_code=400, detail="Invalid department ID")
+            department = await db.departments.find_one({"_id": ObjectId(department_id)})
             if not department:
                 raise HTTPException(status_code=404, detail="Department not found")
-        except HTTPException:
+        except Exception:  # Catch any exception during ObjectId conversion
             raise HTTPException(status_code=400, detail="Invalid department ID")
 
     # Determine initial status based on dates
@@ -998,7 +1094,12 @@ async def create_election(election: ElectionBase, current_user: dict = Depends(g
 
 @app.put("/admin/elections/{election_id}", response_description="Update an election")
 async def update_election(election_id: str, election: ElectionBase, current_user: dict = Depends(get_admin_user)):
-    election_obj_id = validate_object_id(election_id, "Invalid election ID")
+    try:
+        election_obj_id = validate_object_id(election_id)
+        if election_obj_id is None:
+            raise HTTPException(status_code=400, detail="Invalid election ID")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid election ID")
 
     # Validate that facultyId is provided for Faculty elections
     if election.category == "Faculty" and not election.facultyId:
@@ -1011,21 +1112,25 @@ async def update_election(election_id: str, election: ElectionBase, current_user
     # Verify faculty exists if facultyId is provided
     if election.facultyId:
         try:
-            faculty_id = validate_object_id(election.facultyId, "Invalid faculty ID")
-            faculty = await db.faculties.find_one({"_id": faculty_id})
+            faculty_id = validate_object_id(election.facultyId) # Corrected call
+            if faculty_id is None:
+                raise HTTPException(status_code=400, detail="Invalid faculty ID")
+            faculty = await db.faculties.find_one({"_id": ObjectId(faculty_id)})
             if not faculty:
                 raise HTTPException(status_code=404, detail="Faculty not found")
-        except HTTPException:
+        except Exception:
             raise HTTPException(status_code=400, detail="Invalid faculty ID")
 
     # Verify department exists if departmentId is provided
     if election.departmentId:
         try:
-            department_id = validate_object_id(election.departmentId, "Invalid department ID")
-            department = await db.departments.find_one({"_id": department_id})
+            department_id = validate_object_id(election.departmentId) # Corrected call
+            if department_id is None:
+                raise HTTPException(status_code=400, detail="Invalid department ID")
+            department = await db.departments.find_one({"_id": ObjectId(department_id)})
             if not department:
                 raise HTTPException(status_code=404, detail="Department not found")
-        except HTTPException:
+        except Exception:
             raise HTTPException(status_code=400, detail="Invalid department ID")
 
     # Determine status based on dates
@@ -1037,7 +1142,7 @@ async def update_election(election_id: str, election: ElectionBase, current_user
         status = "completed"
 
     update_result = await db.elections.update_one(
-        {"_id": election_obj_id},
+        {"_id": ObjectId(election_obj_id)},
         {"$set": {
             **election.dict(),
             "status": status,
@@ -1048,29 +1153,107 @@ async def update_election(election_id: str, election: ElectionBase, current_user
     if update_result.modified_count == 0:
         raise HTTPException(status_code=404, detail="Election not found")
 
-    updated_election = await db.elections.find_one({"_id": election_obj_id})
+    updated_election = await db.elections.find_one({"_id": ObjectId(election_obj_id)})
     updated_election["_id"] = str(updated_election["_id"])
     return updated_election
-
 
 # Admin election routes
 @app.get("/admin/elections/active", response_description="List all active elections for admin")
 async def admin_list_active_elections(current_user: dict = Depends(get_admin_user)):
-    now = datetime.now(timezone.utc)
+    now_utc = datetime.now(timezone.utc)
+    print(f"Current UTC time: {now_utc}")
 
-    # Get elections that are currently active
-    query = {
-        "startDate": {"$lte": now},
-        "endDate": {"$gte": now}
-    }
+    elections = await db.elections.find().to_list(1000)
+    print(f"Total number of elections found: {len(elections)}")
 
-    elections = await db.elections.find(query).to_list(1000)
+    active_elections = []
 
     for election in elections:
-        election["_id"] = str(election["_id"])
+        election_id = election.get("_id")
+        start_date_obj = election.get("startDate")
+        end_date_obj = election.get("endDate")
 
-    return elections
+        print(f"Processing election ID: {election_id}")
+        print(f"  startDate from DB: {start_date_obj}")
+        print(f"  endDate from DB: {end_date_obj}")
 
+        # Handle different MongoDB date formats
+        start_date = None
+        end_date = None
+
+        # Handle $date.$numberLong format
+        if isinstance(start_date_obj, dict) and "$date" in start_date_obj:
+            if isinstance(start_date_obj["$date"], dict) and "$numberLong" in start_date_obj["$date"]:
+                try:
+                    start_date_ms = int(start_date_obj["$date"]["$numberLong"])
+                    start_date = datetime.fromtimestamp(start_date_ms / 1000, tz=timezone.utc)
+                    print(f"  Parsed startDate (UTC): {start_date}")
+                except (KeyError, ValueError) as e:
+                    print(f"  Error parsing startDate for election ID {election_id}: {e}")
+            # Handle direct $date format (ISODate)
+            else:
+                try:
+                    start_date_ms = int(start_date_obj["$date"])
+                    start_date = datetime.fromtimestamp(start_date_ms / 1000, tz=timezone.utc)
+                    print(f"  Parsed startDate (UTC): {start_date}")
+                except (KeyError, ValueError, TypeError) as e:
+                    print(f"  Error parsing startDate for election ID {election_id}: {e}")
+        # Handle if it's already a datetime object
+        elif isinstance(start_date_obj, datetime):
+            # Add timezone info if it's naive
+            if start_date_obj.tzinfo is None:
+                start_date = start_date_obj.replace(tzinfo=timezone.utc)
+            else:
+                start_date = start_date_obj
+            print(f"  Using datetime object for startDate: {start_date}")
+        else:
+            print(f"  Warning: Unrecognized startDate format for election ID {election_id}: {start_date_obj}")
+
+        # Apply the same logic for end_date
+        if isinstance(end_date_obj, dict) and "$date" in end_date_obj:
+            if isinstance(end_date_obj["$date"], dict) and "$numberLong" in end_date_obj["$date"]:
+                try:
+                    end_date_ms = int(end_date_obj["$date"]["$numberLong"])
+                    end_date = datetime.fromtimestamp(end_date_ms / 1000, tz=timezone.utc)
+                    print(f"  Parsed endDate (UTC): {end_date}")
+                except (KeyError, ValueError) as e:
+                    print(f"  Error parsing endDate for election ID {election_id}: {e}")
+            else:
+                try:
+                    end_date_ms = int(end_date_obj["$date"])
+                    end_date = datetime.fromtimestamp(end_date_ms / 1000, tz=timezone.utc)
+                    print(f"  Parsed endDate (UTC): {end_date}")
+                except (KeyError, ValueError, TypeError) as e:
+                    print(f"  Error parsing endDate for election ID {election_id}: {e}")
+        elif isinstance(end_date_obj, datetime):
+            # Add timezone info if it's naive
+            if end_date_obj.tzinfo is None:
+                end_date = end_date_obj.replace(tzinfo=timezone.utc)
+            else:
+                end_date = end_date_obj
+            print(f"  Using datetime object for endDate: {end_date}")
+        else:
+            print(f"  Warning: Unrecognized endDate format for election ID {election_id}: {end_date_obj}")
+
+        # Check if active only if we successfully parsed both dates
+        if start_date and end_date:
+            # Ensure both datetimes have timezone info for comparison
+            if start_date.tzinfo is None:
+                start_date = start_date.replace(tzinfo=timezone.utc)
+            if end_date.tzinfo is None:
+                end_date = end_date.replace(tzinfo=timezone.utc)
+
+            is_active = start_date <= now_utc <= end_date
+            print(f"  Comparison: {start_date} <= {now_utc} <= {end_date} is {is_active}")
+            if is_active:
+                # Convert ObjectId to string for JSON serialization
+                election["_id"] = str(election["_id"])
+                active_elections.append(election)
+        else:
+            print(f"  Warning: Could not perform comparison for election ID {election_id} due to parsing issues.")
+
+    print(f"Number of active elections found: {len(active_elections)}")
+    return active_elections
 
 @app.get("/admin/elections/upcoming", response_description="List all upcoming elections for admin")
 async def admin_list_upcoming_elections(current_user: dict = Depends(get_admin_user)):
