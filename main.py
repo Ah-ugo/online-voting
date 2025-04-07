@@ -2399,7 +2399,13 @@ async def create_candidate(
         current_user: dict = Depends(get_admin_user)
 ):
     # Verify election exists
-    election_obj_id = validate_object_id(electionId, "Invalid election ID")
+    try:
+        if not ObjectId.is_valid(electionId):
+            raise HTTPException(status_code=400, detail="Invalid election ID format")
+        election_obj_id = ObjectId(electionId)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid election ID: {str(e)}")
+
     election = await db.elections.find_one({"_id": election_obj_id})
     if not election:
         raise HTTPException(status_code=404, detail="Election not found")
