@@ -244,6 +244,16 @@ class ElectionBase(BaseModel):
         return v
 
 
+class ElectionUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    startDate: Optional[datetime] = None
+    endDate: Optional[datetime] = None
+    facultyId: Optional[str] = None
+    departmentId: Optional[str] = None
+
+
 class ElectionInDB(ElectionBase):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
     status: str = "upcoming"  # upcoming, active, completed
@@ -1105,7 +1115,7 @@ async def create_election(election: ElectionBase, current_user: dict = Depends(g
 
 
 @app.put("/admin/elections/{election_id}", response_description="Update an election")
-async def update_election(election_id: str, election: ElectionBase, current_user: dict = Depends(get_admin_user)):
+async def update_election(election_id: str, election: ElectionUpdate, current_user: dict = Depends(get_admin_user)):
     try:
         election_obj_id = validate_object_id(election_id)
         if election_obj_id is None:
