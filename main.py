@@ -2352,21 +2352,39 @@ async def list_election_candidates(election_id: str, current_user: dict = Depend
     """
     Lists candidates for a specific election.
     """
-    election_obj_id = validate_object_id(election_id)
-    if election_obj_id is None:
-        raise HTTPException(status_code=400, detail="Invalid election ID")
+    # Debug: Print the ID we're looking for
+    print(f"Looking for election with ID: {election_id}")
 
+    # Important: Convert string ID to ObjectId properly
+    try:
+        if not ObjectId.is_valid(election_id):
+            raise HTTPException(status_code=400, detail="Invalid election ID format")
+        election_obj_id = ObjectId(election_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid election ID: {str(e)}")
+
+    # Debug: Check if the election exists
     election = await db.elections.find_one({"_id": election_obj_id})
     if not election:
+        # Debug: Print all elections to help diagnose the issue
+        all_elections = await db.elections.find().to_list(10)
+        print(f"Election not found. Available elections (first 10):")
+        for e in all_elections:
+            print(f"  ID: {e['_id']}, Title: {e.get('title')}")
+
         raise HTTPException(status_code=404, detail="Election not found")
+
+    print(f"Found election: {election.get('title')}")
 
     # Get candidates for this election
     candidates = await db.candidates.find({"electionId": election_id}).to_list(1000)
+    print(f"Found {len(candidates)} candidates for this election")
 
     for candidate in candidates:
         candidate["_id"] = str(candidate["_id"])
 
     return candidates
+
 
 @app.post("/admin/candidates", response_description="Create a new candidate")
 async def create_candidate(
