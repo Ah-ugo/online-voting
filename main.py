@@ -1036,6 +1036,18 @@ async def get_election_results(election_id: str, current_user: dict = Depends(ge
     return results
 
 
+
+@app.get("/admin/elections", response_description="List all elections for admin", response_model=List[ElectionBase])
+async def admin_list_elections(current_user: dict = Depends(get_admin_user)):
+    """
+    Retrieves a list of all elections for administrators.
+    """
+    elections = await db.elections.find().to_list(length=None)
+    for election in elections:
+        election["_id"] = str(election["_id"])
+    return elections
+
+
 @app.post("/admin/elections", response_description="Create a new election")
 async def create_election(election: ElectionBase, current_user: dict = Depends(get_admin_user)):
     now = datetime.now(timezone.utc)
