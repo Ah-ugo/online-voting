@@ -687,12 +687,12 @@ async def delete_department(department_id: str, current_user: dict = Depends(get
 
 
 # Election routes
-@app.get("/elections/active", response_description="List active elections")
+@app.get("/elections/active", response_description="List active elections", response_model=List[dict])
 async def list_active_elections(current_user: dict = Depends(get_current_user)):
     now_utc = datetime.now(timezone.utc)
     print(f"Current UTC time for user elections: {now_utc}")
+    print(f"Current User object: {current_user}")
 
-    # MongoDB query using proper BSON date format for comparison
     pipeline = [
         {
             "$match": {
@@ -709,94 +709,82 @@ async def list_active_elections(current_user: dict = Depends(get_current_user)):
     elections = await db.elections.aggregate(pipeline).to_list(1000)
     print(f"Total number of active elections found: {len(elections)}")
 
-    # Debug: Print each election
-    for i, election in enumerate(elections):
-        print(
-            f"Election {i + 1}: ID={election.get('_id')}, Category={election.get('category')}, Title={election.get('title')}")
-        print(f"  facultyId={election.get('facultyId')}, departmentId={election.get('departmentId')}")
+    user_faculty_name = current_user.get("faculty")
+    user_department_name = current_user.get("department")
 
-    # Get user's faculty and department IDs
-    user_faculty_id = None
-    user_department_id = None
+    print(f"User faculty Name: {user_faculty_name}, User department Name: {user_department_name}")
 
-    if isinstance(current_user.get("faculty"), dict):
-        user_faculty_id = current_user["faculty"].get("_id")
-    elif current_user.get("faculty"):
-        user_faculty_id = current_user["faculty"]
-
-    if isinstance(current_user.get("department"), dict):
-        user_department_id = current_user["department"].get("_id")
-    elif current_user.get("department"):
-        user_department_id = current_user["department"]
-
-    print(f"User faculty ID: {user_faculty_id}, User department ID: {user_department_id}")
-
-    # Filter elections based on user's faculty/department
     filtered_elections = []
     for election in elections:
         election["_id"] = str(election["_id"])
-        category = election.get("category", "").lower()  # Convert to lowercase for case-insensitive comparison
+        category = election.get("category", "").lower()
 
         print(f"Processing election: {election.get('title')} with category: {category}")
 
-        # SUG elections are available to all students
         if category == "sug":
             print(f"  Adding SUG election: {election.get('title')}")
             filtered_elections.append(election)
-        # Faculty elections are only available to students in that faculty
         elif category == "faculty":
             print(f"  Checking faculty election: {election.get('title')}")
-            if user_faculty_id:
-                print(f"  User has faculty ID: {user_faculty_id}")
-                if not election.get("facultyId"):
-                    print(f"  Election has no facultyId restriction, adding")
-                    filtered_elections.append(election)
-                elif str(election.get("facultyId")) == str(user_faculty_id):
-                    print(f"  User's faculty matches election's faculty, adding")
-                    filtered_elections.append(election)
-                else:
-                    print(f"  Faculty mismatch: election={election.get('facultyId')}, user={user_faculty_id}")
+            election_faculty_id = election.get("facultyId")
+            if user_faculty_name and election_faculty_id:
+                # Convert string ID to ObjectId before querying
+                try:
+                    from bson.objectid import ObjectId
+                    faculty_id_obj = ObjectId(election_faculty_id)
+                    faculty = await db.faculties.find_one({"_id": faculty_id_obj})
+                    if faculty:
+                        fetched_faculty_name = faculty.get("name", "")
+                        print(f"  Fetched faculty name from DB: '{fetched_faculty_name}'")
+                        if fetched_faculty_name.lower() == user_faculty_name.lower():
+                            print(f"  User's faculty ({user_faculty_name}) matches election's faculty ({fetched_faculty_name}), adding")
+                            filtered_elections.append(election)
+                        else:
+                            print(f"  Faculty mismatch: user='{user_faculty_name.lower()}', election='{fetched_faculty_name.lower()}'")
+                    else:
+                        print(f"  Could not find faculty with ID: {election_faculty_id}")
+                except (TypeError, ValueError) as e:
+                    print(f"  Error converting facultyId to ObjectId: {e}")
+                    # Consider whether to add the election in case of ID format error
+            elif not election_faculty_id:
+                print(f"  Election has no facultyId restriction, adding")
+                filtered_elections.append(election)
             else:
-                print(f"  User has no faculty ID, skipping")
-        # Department elections are only available to students in that department
+                print(f"  User has no faculty name, skipping.")
         elif category == "department":
             print(f"  Checking department election: {election.get('title')}")
-            if user_department_id:
-                print(f"  User has department ID: {user_department_id}")
-                if not election.get("departmentId"):
-                    print(f"  Election has no departmentId restriction, adding")
-                    filtered_elections.append(election)
-                elif str(election.get("departmentId")) == str(user_department_id):
-                    print(f"  User's department matches election's department, adding")
-                    filtered_elections.append(election)
-                else:
-                    print(f"  Department mismatch: election={election.get('departmentId')}, user={user_department_id}")
+            election_department_id = election.get("departmentId")
+            if user_department_name and election_department_id:
+                # Convert string ID to ObjectId before querying
+                try:
+                    from bson.objectid import ObjectId
+                    department_id_obj = ObjectId(election_department_id)
+                    department = await db.departments.find_one({"_id": department_id_obj})
+                    if department:
+                        fetched_department_name = department.get("name", "")
+                        print(f"  Fetched department name from DB: '{fetched_department_name}'")
+                        if fetched_department_name.lower() == user_department_name.lower():
+                            print(f"  User's department ({user_department_name}) matches election's department ({fetched_department_name}), adding")
+                            filtered_elections.append(election)
+                        else:
+                            print(f"  Department mismatch.")
+                    else:
+                        print(f"  Could not find department with ID: {election_department_id}")
+                except (TypeError, ValueError) as e:
+                    print(f"  Error converting departmentId to ObjectId: {e}")
+                    # Consider whether to add the election in case of ID format error
+            elif not election_department_id:
+                print(f"  Election has no departmentId restriction, adding")
+                filtered_elections.append(election)
             else:
-                print(f"  User has no department ID, skipping")
-        # Handle any custom categories
+                print(f"  User has no department name, skipping.")
         else:
-            print(f"  Unrecognized category: {category}, checking if it matches")
-            # Try a case-insensitive match for any other categories
-            if election.get("category", "").lower() in ["sug", "faculty", "department"]:
-                print(f"  Category is a known type but different case, processing as {election.get('category', '')}")
-                # Handle the category with its original spelling but case-insensitive logic
-                if election.get("category", "").lower() == "sug":
-                    print(f"  Adding SUG election: {election.get('title')}")
-                    filtered_elections.append(election)
-                elif election.get("category", "").lower() == "faculty" and user_faculty_id:
-                    if not election.get("facultyId") or str(election.get("facultyId")) == str(user_faculty_id):
-                        print(f"  Faculty match, adding")
-                        filtered_elections.append(election)
-                elif election.get("category", "").lower() == "department" and user_department_id:
-                    if not election.get("departmentId") or str(election.get("departmentId")) == str(user_department_id):
-                        print(f"  Department match, adding")
-                        filtered_elections.append(election)
-            else:
-                print(f"  Adding election with unknown category: {category}")
-                filtered_elections.append(election)  # Default to showing elections with unknown categories
+            print(f"  Unrecognized category: {category}, adding")
+            filtered_elections.append(election)
 
     print(f"Number of filtered active elections for user: {len(filtered_elections)}")
     return filtered_elections
+
 
 
 @app.get("/elections/upcoming", response_description="List upcoming elections")
