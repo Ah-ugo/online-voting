@@ -1114,7 +1114,7 @@ async def create_election(election: ElectionBase, current_user: dict = Depends(g
     return created_election
 
 
-@app.put("/admin/elections/{election_id}", response_description="Update an election")
+@router.put("/admin/elections/{election_id}", response_description="Update an election")
 async def update_election(election_id: str, election: ElectionUpdate, current_user: dict = Depends(get_admin_user)):
     try:
         election_obj_id = validate_object_id(election_id)
@@ -1124,17 +1124,17 @@ async def update_election(election_id: str, election: ElectionUpdate, current_us
         raise HTTPException(status_code=400, detail="Invalid election ID")
 
     # Validate that facultyId is provided for Faculty elections
-    if election.category == "Faculty" and not election.facultyId:
+    if election.category == "Faculty" and election.facultyId is None:
         raise HTTPException(status_code=400, detail="Faculty ID is required for Faculty elections")
 
     # Validate that departmentId is provided for Department elections
-    if election.category == "Department" and not election.departmentId:
+    if election.category == "Department" and election.departmentId is None:
         raise HTTPException(status_code=400, detail="Department ID is required for Department elections")
 
     # Verify faculty exists if facultyId is provided
     if election.facultyId:
         try:
-            faculty_id = validate_object_id(election.facultyId) # Corrected call
+            faculty_id = validate_object_id(election.facultyId)
             if faculty_id is None:
                 raise HTTPException(status_code=400, detail="Invalid faculty ID")
             faculty = await db.faculties.find_one({"_id": ObjectId(faculty_id)})
@@ -1146,7 +1146,7 @@ async def update_election(election_id: str, election: ElectionUpdate, current_us
     # Verify department exists if departmentId is provided
     if election.departmentId:
         try:
-            department_id = validate_object_id(election.departmentId) # Corrected call
+            department_id = validate_object_id(election.departmentId)
             if department_id is None:
                 raise HTTPException(status_code=400, detail="Invalid department ID")
             department = await db.departments.find_one({"_id": ObjectId(department_id)})
@@ -1158,18 +1158,19 @@ async def update_election(election_id: str, election: ElectionUpdate, current_us
     # Determine status based on dates
     now = datetime.now(timezone.utc)
     status = "upcoming"
-    if election.startDate <= now <= election.endDate:
-        status = "active"
-    elif election.endDate < now:
-        status = "completed"
+    if election.startDate is not None and election.endDate is not None:
+        if election.startDate <= now <= election.endDate:
+            status = "active"
+        elif election.endDate < now:
+            status = "completed"
+
+    update_data = election.dict(exclude_unset=True)
+    update_data["status"] = status
+    update_data["updatedAt"] = datetime.now(timezone.utc)
 
     update_result = await db.elections.update_one(
         {"_id": ObjectId(election_obj_id)},
-        {"$set": {
-            **election.dict(),
-            "status": status,
-            "updatedAt": datetime.now(timezone.utc)
-        }}
+        {"$set": update_data}
     )
 
     if update_result.modified_count == 0:
@@ -1178,6 +1179,7 @@ async def update_election(election_id: str, election: ElectionUpdate, current_us
     updated_election = await db.elections.find_one({"_id": ObjectId(election_obj_id)})
     updated_election["_id"] = str(updated_election["_id"])
     return updated_election
+
 
 # Admin election routes
 @app.get("/admin/elections/active", response_description="List all active elections for admin")
