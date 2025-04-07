@@ -1114,7 +1114,7 @@ async def create_election(election: ElectionBase, current_user: dict = Depends(g
     return created_election
 
 
-@router.put("/admin/elections/{election_id}", response_description="Update an election")
+@app.put("/admin/elections/{election_id}", response_description="Update an election")
 async def update_election(election_id: str, election: ElectionUpdate, current_user: dict = Depends(get_admin_user)):
     try:
         election_obj_id = validate_object_id(election_id)
